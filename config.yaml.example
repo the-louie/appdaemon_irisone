@@ -6,14 +6,14 @@ presence:
   class: PresencePublisher
   # REQUIRED, non-empty. One entry per person whose notifications are gated.
   persons:
-    - person: person.anders_green      # must exist at start-up, or the app refuses to start (D1)
-      key: anders                      # -> irisone.presence_anders ; [a-z][a-z0-9_]*, unique
+    - person: person.alice             # must exist at start-up, or the app refuses to start (D1)
+      key: alice                       # -> irisone.presence_alice ; [a-z][a-z0-9_]*, unique
       notify:                          # notify services WITHOUT "notify." ; each listed once, estate-wide
-        - mobile_app_pixel_9_pro
-    - person: person.kicki
-      key: kicki
+        - mobile_app_alice_phone
+    - person: person.bob
+      key: bob
       notify:
-        - mobile_app_angelinas_iphone_2025
+        - mobile_app_bob_phone
   # Optional. Defaults are the owner's 2026-10-29 decisions.
   away_debounce_s: 180                 # leaving home is published after this many seconds away (IQ-07)
   stale_after_s: 21600                 # a tracker silent this long publishes "unknown" (IQ-04)

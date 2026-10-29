@@ -41,9 +41,9 @@ urgent is a bug.
 4. Create `config.yaml` from `config.yaml.example` (both sections).
 5. Restart AppDaemon (a new app directory is not hot-loaded).
 6. Verify:
-   - `GET /api/states/irisone.presence_anders` matches `person.anders_green`, and `updated`
+   - `GET /api/states/irisone.presence_<key>` matches its `person.*` entity, and `updated`
      moves forward between two reads 5 minutes apart.
-   - The AppDaemon log has one `presence anders: None -> home (initialize ...)` line and no
+   - The AppDaemon log has one `presence <key>: None -> home (initialize ...)` line per person and no
      WARNING about a missing entity.
    - After an HA restart, the entities are back within seconds.
    - `GET /api/states/irisone.notify_gate_stats` exists with state `0`.
