@@ -111,3 +111,19 @@ def in_home_for_target(domain_states: dict | None, target: str, now_epoch: float
         return None
     in_home = found[0]["attributes"].get("in_home")
     return in_home if isinstance(in_home, bool) else None
+
+
+# --- Gate outcome reporting (T-66a A-66.9) ---------------------------------
+# Every consumer that calls notification_policy.should_notify reports the
+# outcome with `self.fire_event(GATE_EVENT, **gate_event(...))`. The irisone
+# housekeeping app counts them into irisone.notify_gate_stats, which is the
+# T-69 week-of-evidence source (IQ-28). An event keeps consumers decoupled: if
+# the housekeeping app is down, nothing in the consumer changes.
+
+GATE_EVENT = "irisone_gate"
+
+
+def gate_event(app: str, key: str, target: str, urgency: str, send: bool, reason: str) -> dict:
+    """The event payload for one gate decision."""
+    return {"app": str(app), "key": str(key), "target": normalise_target(target),
+            "urgency": str(urgency), "send": bool(send), "reason": str(reason)}

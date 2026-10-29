@@ -18,3 +18,10 @@ presence:
   away_debounce_s: 180                 # leaving home is published after this many seconds away (IQ-07)
   stale_after_s: 21600                 # a tracker silent this long publishes "unknown" (IQ-04)
   heartbeat_s: 300                     # republish interval, 60..3600; readers treat 3x this as stale
+
+irisone:
+  module: i1_irisone
+  class: IrisoneHousekeeping
+  # Optional.
+  state_file: /conf/irisone_state.json   # gate counters, kept 14 days, survive restarts
+  heartbeat_s: 300                       # republish interval for irisone.notify_gate_stats
