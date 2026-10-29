@@ -199,7 +199,9 @@ class IrisoneHousekeeping(hass.Hass):
         now = self.get_now()
         prune(self.stats, now.date())
         state, attrs = summarise(self.stats, now.date())
-        self.set_state(self.ENTITY, state=state,
+        # str(): AppDaemon 4.5 drops a state of 0 (0 == False) before the HA call,
+        # and HA refuses a write with no state (measured live 2026-10-29).
+        self.set_state(self.ENTITY, state=str(state),
                        attributes=irisone_bus.build_attributes(
                            self.SOURCE, now, friendly_name="Notification gate stats", **attrs),
                        check_existence=False)
