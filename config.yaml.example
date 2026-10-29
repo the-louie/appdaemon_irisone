@@ -25,3 +25,5 @@ irisone:
   # Optional.
   state_file: /conf/irisone_state.json   # gate counters, kept 14 days, survive restarts
   heartbeat_s: 300                       # republish interval for irisone.notify_gate_stats
+  test_button: input_button.irisone_gate_test   # from deploy/ih_packages/irisone.yaml; null disables
+  notification_channel: watchdog_alerts  # T-52: must be a channel enabled on the phones

@@ -5,7 +5,15 @@ housekeeping and be useful for future tasks that are cross-apps but not
 strictly belong to one app". It replaces the irisone custom component, whose
 only output was `irisone.initilized`, which nothing read.
 
-Today it does one thing: **counts the notification gate's decisions** (IQ-28).
+It does two things.
+
+**The gate test button (IQ-27).** Pressing `input_button.irisone_gate_test`
+sends one NON_URGENT and one URGENT test message to every person the presence
+app maps, through the same `should_notify` gate the real apps use. With
+someone away, the first is dropped and the second arrives: a repeatable live
+proof that presence, the target map and the gate agree, after any change.
+
+**Counting the notification gate's decisions** (IQ-28).
 Every consumer of notification_policy.should_notify fires `irisone_gate`
 events; this app keeps per-day counts per app and outcome, persists them so an
 HA or AppDaemon restart does not zero the week, and publishes them as
@@ -20,9 +28,13 @@ from datetime import date, timedelta
 import appdaemon.plugins.hass.hassapi as hass
 
 import irisone_bus
+import notification_policy as policy
 
 DEFAULT_STATE_FILE = "/conf/irisone_state.json"
 DEFAULT_HEARTBEAT_S = 300
+DEFAULT_TEST_BUTTON = "input_button.irisone_gate_test"
+DEFAULT_CHANNEL = "watchdog_alerts"  # T-52: an unnamed channel is discarded by Android
+TEST_APP = "irisone_test"
 KEEP_DAYS = 14
 STATE_VERSION = 1
 
@@ -44,7 +56,25 @@ def validate_config(args: dict) -> dict:
     heartbeat = args.get("heartbeat_s", DEFAULT_HEARTBEAT_S)
     if not isinstance(heartbeat, (int, float)) or isinstance(heartbeat, bool) or not 60 <= heartbeat <= 3600:
         raise ValueError(f"'heartbeat_s' must be between 60 and 3600, got {heartbeat!r}")
-    return {"state_file": state_file, "heartbeat_s": heartbeat}
+    button = args.get("test_button", DEFAULT_TEST_BUTTON)
+    if button is not None and (not isinstance(button, str) or not button.startswith("input_button.")):
+        raise ValueError(f"'test_button' must be an input_button.* entity or null, got {button!r}")
+    channel = args.get("notification_channel", DEFAULT_CHANNEL)
+    if not isinstance(channel, str):
+        raise ValueError(f"'notification_channel' must be a string, got {channel!r}")
+    return {"state_file": state_file, "heartbeat_s": heartbeat, "test_button": button,
+            "notification_channel": channel,
+            "notification_priority": args.get("notification_priority", "high")}
+
+
+def gate_test_targets(domain_states: dict | None) -> list:
+    """Every notify target the presence app currently maps, sorted, once each."""
+    targets = set()
+    for entity_id, state in (domain_states or {}).items():
+        if entity_id.startswith(f"{irisone_bus.DOMAIN}.presence_") and isinstance(state, dict):
+            for t in (state.get("attributes") or {}).get("notify_targets") or []:
+                targets.add(irisone_bus.normalise_target(t))
+    return sorted(targets)
 
 
 def record(stats: dict, day: str, event: dict) -> None:
@@ -104,7 +134,14 @@ class IrisoneHousekeeping(hass.Hass):
     def initialize(self):
         cfg = validate_config(self.args)
         self.state_file = cfg["state_file"]
+        self.notification_channel = cfg["notification_channel"]
+        self.notification_priority = cfg["notification_priority"]
         self.stats = self.load_state()
+        if cfg["test_button"]:
+            if not self.entity_exists(cfg["test_button"]):
+                raise ValueError(f"{cfg['test_button']} does not exist; create it from "
+                                 f"deploy/ih_packages/irisone.yaml, or set test_button: null")
+            self.listen_state(self._on_test_button, cfg["test_button"])
         self.listen_event(self._on_gate, irisone_bus.GATE_EVENT)
         self.listen_event(self._on_reconnect, "plugin_started")
         self.run_every(self._on_heartbeat, "now+{}".format(cfg["heartbeat_s"]), cfg["heartbeat_s"])
@@ -117,6 +154,43 @@ class IrisoneHousekeeping(hass.Hass):
 
     def _on_reconnect(self, event_name, data, kwargs):
         self.publish()
+
+    def _on_test_button(self, entity, attribute, old, new, kwargs):
+        self.run_gate_test()
+
+    def run_gate_test(self):
+        """One NON_URGENT and one URGENT message per mapped person, through the gate."""
+        domain = self.get_state(irisone_bus.DOMAIN)
+        epoch = self.get_now().timestamp()
+        targets = gate_test_targets(domain)
+        if not targets:
+            self.log("gate test: no presence entity maps a notify target; is presence running?",
+                     level="WARNING")
+            return
+        for target in targets:
+            in_home = irisone_bus.in_home_for_target(domain, target, epoch)
+            for urgency in (policy.NON_URGENT, policy.URGENT):
+                send, reason = policy.should_notify(urgency, in_home)
+                self.log(f"gate test {target} {urgency}: {'SEND' if send else 'DROP'} ({reason})")
+                self.fire_event(irisone_bus.GATE_EVENT, **irisone_bus.gate_event(
+                    TEST_APP, f"test_{urgency}", target, urgency, send, reason))
+                if send:
+                    self.call_service(
+                        f"notify/{target}",
+                        title=f"Gate test: {urgency}",
+                        message=f"Sent because: {reason}. in_home={in_home}.",
+                        data=self._notification_data(),
+                    )
+
+    def _notification_data(self):
+        """Companion-app data block (T-52); the same shape as the watchdog's."""
+        if not self.notification_channel:
+            return {}
+        data = {"channel": self.notification_channel}
+        if self.notification_priority:
+            data["priority"] = self.notification_priority
+            data["ttl"] = 0
+        return data
 
     def _on_heartbeat(self, kwargs):
         self.publish()
