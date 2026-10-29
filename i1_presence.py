@@ -19,6 +19,8 @@ The rules (owner decisions 2026-10-29, docs/planning/T-69-interview.md)
   a dead phone's last fix forever, and that must not read as "away".
 * `unknown` is published at once. Consumers send on unknown, so it can only add
   notifications, never lose one.
+* Consumers read home/away from the state, not from an attribute: AppDaemon
+  4.5 delivers an attribute True as "true" and drops False (irisone_bus).
 * The notify-target -> person map lives here, once (IQ-09), and is published as
   the `notify_targets` attribute so consumers never hold a copy.
 
@@ -141,11 +143,6 @@ def anyone_home(states: list) -> str:
     return UNKNOWN
 
 
-def in_home(state: str):
-    """The `in_home` attribute consumers read: True, False, or None for unknown."""
-    return {HOME: True, AWAY: False}.get(state)
-
-
 def source_age_s(tracker_state, now_epoch: float):
     """Seconds since the tracker last updated, or None if that cannot be read.
 
@@ -255,7 +252,6 @@ class PresencePublisher(hass.Hass):
             state=state,
             attributes=irisone_bus.build_attributes(
                 self.SOURCE, now,
-                in_home=in_home(state),
                 zone=raw,
                 since=self._since[key],
                 person=p["person"],
