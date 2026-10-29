@@ -25,4 +25,16 @@ consumer apps carry byte-identical copies, guarded by
 
 ## Deploy checklist (operator)
 
-Filled in as the apps land; see the end of Sprint 14.
+1. Create the GitHub remote `the-louie/appdaemon_irisone` (private) and push.
+2. On docker4, clone into the AppDaemon apps directory next to the other app repos.
+3. Create `config.yaml` from `config.yaml.example` (presence section).
+4. Restart AppDaemon (a new app directory is not hot-loaded).
+5. Verify:
+   - `GET /api/states/irisone.presence_anders` matches `person.anders_green`, and `updated`
+     moves forward between two reads 5 minutes apart.
+   - The AppDaemon log has one `presence anders: None -> home (initialize ...)` line and no
+     WARNING about a missing entity.
+   - After an HA restart, the entities are back within seconds.
+6. Add `presence` to the watchdog's `expect_running`.
+
+The irisone custom component is **not** removed at this step. Claude advises when.

@@ -1,1 +1,20 @@
-# Filled in by S14-06 (PresencePublisher) and S14-08/09 (IrisoneHousekeeping).
+# appdaemon_irisone -- the irisone.* bus (PROJECT_RULES §4, T-66a / T-70).
+# Copy to config.yaml on the AppDaemon host. config.yaml is gitignored.
+
+presence:
+  module: i1_presence
+  class: PresencePublisher
+  # REQUIRED, non-empty. One entry per person whose notifications are gated.
+  persons:
+    - person: person.anders_green      # must exist at start-up, or the app refuses to start (D1)
+      key: anders                      # -> irisone.presence_anders ; [a-z][a-z0-9_]*, unique
+      notify:                          # notify services WITHOUT "notify." ; each listed once, estate-wide
+        - mobile_app_pixel_9_pro
+    - person: person.kicki
+      key: kicki
+      notify:
+        - mobile_app_angelinas_iphone_2025
+  # Optional. Defaults are the owner's 2026-10-29 decisions.
+  away_debounce_s: 180                 # leaving home is published after this many seconds away (IQ-07)
+  stale_after_s: 21600                 # a tracker silent this long publishes "unknown" (IQ-04)
+  heartbeat_s: 300                     # republish interval, 60..3600; readers treat 3x this as stale

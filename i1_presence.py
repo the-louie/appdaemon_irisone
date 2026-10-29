@@ -26,6 +26,11 @@ The pure functions below carry all of that and are tested directly; the app
 class only reads states, calls them, and writes.
 """
 import re
+from datetime import datetime
+
+import appdaemon.plugins.hass.hassapi as hass
+
+import irisone_bus
 
 HOME = "home"
 AWAY = "away"
@@ -139,3 +144,133 @@ def anyone_home(states: list) -> str:
 def in_home(state: str):
     """The `in_home` attribute consumers read: True, False, or None for unknown."""
     return {HOME: True, AWAY: False}.get(state)
+
+
+def source_age_s(tracker_state, now_epoch: float):
+    """Seconds since the tracker last updated, or None if that cannot be read.
+
+    Note: HA resets last_updated at restart, so right after one a dead phone looks
+    fresh for up to stale_after_s. Accepted: the failure direction is "away" for
+    at most 6 h, then unknown.
+    """
+    if not isinstance(tracker_state, dict):
+        return None
+    stamp = tracker_state.get("last_updated")
+    try:
+        when = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return now_epoch - when.timestamp()
+
+
+class PresencePublisher(hass.Hass):
+    """Publishes irisone.presence_<key> per configured person, plus anyone_home."""
+
+    SOURCE = "presence"
+
+    def initialize(self):
+        cfg = validate_config(self.args)
+        self.persons = cfg["persons"]
+        self.debounce_s = cfg["away_debounce_s"]
+        self.stale_after_s = cfg["stale_after_s"]
+        for p in self.persons:
+            if not self.entity_exists(p["person"]):
+                raise ValueError(f"{p['person']} does not exist in Home Assistant")
+
+        self._published = {p["key"]: None for p in self.persons}
+        self._pending = {p["key"]: None for p in self.persons}
+        self._since = {p["key"]: None for p in self.persons}
+        self._recheck = {p["key"]: None for p in self.persons}
+
+        for p in self.persons:
+            self.listen_state(self._on_person, p["person"], key=p["key"])
+        # HA restarted or reconnected: our entities are gone, publish them again.
+        self.listen_event(self._on_reconnect, "plugin_started")
+        # The heartbeat keeps `updated` fresh for readers and catches a tracker
+        # going stale, which produces no state change of its own.
+        self.run_every(self._on_heartbeat, "now+{}".format(cfg["heartbeat_s"]), cfg["heartbeat_s"])
+        self.publish_all(reason="initialize")
+
+    # --- callbacks -------------------------------------------------------
+
+    def _on_person(self, entity, attribute, old, new, kwargs):
+        self.evaluate(self._person(kwargs["key"]), reason="person changed")
+        self._publish_anyone_home()
+
+    def _on_reconnect(self, event_name, data, kwargs):
+        self.publish_all(reason="HA reconnect")
+
+    def _on_heartbeat(self, kwargs):
+        self.publish_all(reason="heartbeat")
+
+    def _on_recheck(self, kwargs):
+        self._recheck[kwargs["key"]] = None
+        self.evaluate(self._person(kwargs["key"]), reason="away hold elapsed")
+        self._publish_anyone_home()
+
+    # --- work ------------------------------------------------------------
+
+    def _person(self, key):
+        return next(p for p in self.persons if p["key"] == key)
+
+    def publish_all(self, reason):
+        for p in self.persons:
+            self.evaluate(p, reason=reason)
+        self._publish_anyone_home()
+
+    def evaluate(self, p, reason):
+        key = p["key"]
+        now = self.get_now()
+        epoch = now.timestamp()
+        person_state = self.get_state(p["person"], attribute="all")
+        if not isinstance(person_state, dict):
+            person_state = {}
+        raw = person_state.get("state")
+        source = (person_state.get("attributes") or {}).get("source")
+        age = source_age_s(self.get_state(source, attribute="all"), epoch) if source else None
+
+        observed = observe(raw, age, self.stale_after_s)
+        state, self._pending[key] = next_presence(
+            observed, self._published[key], self._pending[key], epoch, self.debounce_s)
+
+        if self._pending[key] is not None and self._recheck[key] is None:
+            remaining = max(1, self.debounce_s - (epoch - self._pending[key]))
+            self._recheck[key] = self.run_in(self._on_recheck, remaining, key=key)
+        elif self._pending[key] is None and self._recheck[key] is not None:
+            self.cancel_timer(self._recheck[key], silent=True)
+            self._recheck[key] = None
+
+        if state != self._published[key]:
+            self.log("presence {}: {} -> {} ({}; raw {!r})".format(
+                key, self._published[key], state, reason, raw))
+            self._since[key] = now.isoformat()
+        else:
+            self.log("presence {}: {} ({})".format(key, state, reason), level="DEBUG")
+        self._published[key] = state
+
+        self.set_state(
+            "{}.presence_{}".format(irisone_bus.DOMAIN, key),
+            state=state,
+            attributes=irisone_bus.build_attributes(
+                self.SOURCE, now,
+                in_home=in_home(state),
+                zone=raw,
+                since=self._since[key],
+                person=p["person"],
+                notify_targets=list(p["notify"]),
+                friendly_name="Presence {}".format(key),
+            ),
+            check_existence=False,
+        )
+
+    def _publish_anyone_home(self):
+        now = self.get_now()
+        self.set_state(
+            "{}.presence_anyone_home".format(irisone_bus.DOMAIN),
+            state=anyone_home(list(self._published.values())),
+            attributes=irisone_bus.build_attributes(
+                self.SOURCE, now, friendly_name="Presence anyone home"),
+            check_existence=False,
+        )
