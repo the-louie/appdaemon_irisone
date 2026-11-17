@@ -252,13 +252,17 @@ class PresencePublisher(hass.Hass):
             state=state,
             attributes=irisone_bus.build_attributes(
                 self.SOURCE, now,
-                zone=raw,
+                # str: AppDaemon's set_state drops a None (T-78).
+                zone=str(raw) if raw is not None else "unknown",
                 since=self._since[key],
                 person=p["person"],
                 notify_targets=list(p["notify"]),
                 friendly_name="Presence {}".format(key),
             ),
             check_existence=False,
+            # replace: otherwise AppDaemon 4.5.13 merges HA's last_changed/context
+            # into the attributes and posts them back (T-78, seen live 2026-11-11).
+            replace=True,
         )
 
     def _publish_anyone_home(self):
@@ -269,4 +273,5 @@ class PresencePublisher(hass.Hass):
             attributes=irisone_bus.build_attributes(
                 self.SOURCE, now, friendly_name="Presence anyone home"),
             check_existence=False,
+            replace=True,  # T-78: keeps AppDaemon's bookkeeping out of the attributes
         )

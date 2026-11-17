@@ -204,7 +204,8 @@ class IrisoneHousekeeping(hass.Hass):
         self.set_state(self.ENTITY, state=str(state),
                        attributes=irisone_bus.build_attributes(
                            self.SOURCE, now, friendly_name="Notification gate stats", **attrs),
-                       check_existence=False)
+                       check_existence=False,
+                       replace=True)  # T-78: no AppDaemon bookkeeping in the attributes
 
     def load_state(self) -> dict:
         try:
